@@ -1,11 +1,198 @@
 // PaperTrace Extension - Popup Script
 
-const API_ENDPOINT = "http://localhost:3000/api/analyze"; // Change to your deployed URL
-const FULL_APP_URL = "http://localhost:3000"; // Change to your deployed URL
+const DEFAULT_APP_BASE_URLS = ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"];
+const DEFAULT_BACKEND_BASE_URLS = ["http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:8001", "http://127.0.0.1:8001"];
+const DEFAULT_SETTINGS = {
+  apiUrl: "http://localhost:3000/api/analyze",
+  appBaseUrl: "http://localhost:3000",
+  autoAnalyze: false,
+};
+
+let lastWorkingBaseUrl = DEFAULT_SETTINGS.appBaseUrl;
 
 document.getElementById("analyzeBtn").addEventListener("click", analyzePaper);
+document.getElementById("openAppBtn").addEventListener("click", openFullAppWithCurrentPaper);
 document.getElementById("settingsBtn").addEventListener("click", openSettings);
 document.getElementById("fullReport").addEventListener("click", openFullReport);
+
+function normalizeBaseUrl(url) {
+  return String(url || "").replace(/\/+$/, "");
+}
+
+function deriveBaseUrlFromApi(apiUrl) {
+  const normalized = normalizeBaseUrl(apiUrl);
+  return normalized.replace(/\/api\/analyze$/i, "");
+}
+
+function deriveBackendBaseFromApi(apiUrl) {
+  const normalized = normalizeBaseUrl(apiUrl);
+  return normalized.replace(/\/api\/analyze$/i, "").replace(/\/analyze$/i, "");
+}
+
+async function getSettings() {
+  const settings = await chrome.storage.sync.get(["apiUrl", "appBaseUrl", "autoAnalyze"]);
+  return {
+    apiUrl: settings.apiUrl || DEFAULT_SETTINGS.apiUrl,
+    appBaseUrl: settings.appBaseUrl || deriveBaseUrlFromApi(settings.apiUrl || DEFAULT_SETTINGS.apiUrl) || DEFAULT_SETTINGS.appBaseUrl,
+    autoAnalyze: Boolean(settings.autoAnalyze),
+  };
+}
+
+function getApiCandidates(settings) {
+  const configuredApi = normalizeBaseUrl(settings.apiUrl);
+  const configuredBase = normalizeBaseUrl(settings.appBaseUrl || deriveBaseUrlFromApi(configuredApi));
+  const configuredBackendBase = normalizeBaseUrl(deriveBackendBaseFromApi(configuredApi));
+  const candidates = [
+    configuredApi,
+    configuredBase ? `${configuredBase}/api/analyze` : "",
+    configuredBackendBase ? `${configuredBackendBase}/analyze` : "",
+    ...DEFAULT_APP_BASE_URLS.map((base) => `${base}/api/analyze`),
+    ...DEFAULT_BACKEND_BASE_URLS.map((base) => `${base}/analyze`),
+  ].filter(Boolean);
+  return [...new Set(candidates)];
+}
+
+function getAppBaseCandidates(settings) {
+  const configuredBase = normalizeBaseUrl(settings.appBaseUrl || deriveBaseUrlFromApi(settings.apiUrl));
+  const candidates = [configuredBase, ...DEFAULT_APP_BASE_URLS].filter(Boolean);
+  return [...new Set(candidates)];
+}
+
+function getParseCandidates(settings) {
+  const configuredApi = normalizeBaseUrl(settings.apiUrl);
+  const configuredAppBase = normalizeBaseUrl(settings.appBaseUrl || deriveBaseUrlFromApi(configuredApi));
+  const configuredBackendBase = normalizeBaseUrl(deriveBackendBaseFromApi(configuredApi));
+  const candidates = [
+    configuredAppBase ? `${configuredAppBase}/api/parse-pdf` : "",
+    configuredBackendBase ? `${configuredBackendBase}/parse-pdf-url` : "",
+    ...DEFAULT_APP_BASE_URLS.map((base) => `${base}/api/parse-pdf`),
+    ...DEFAULT_BACKEND_BASE_URLS.map((base) => `${base}/parse-pdf-url`),
+  ].filter(Boolean);
+  return [...new Set(candidates)];
+}
+
+async function postAnalyze(payload, settings) {
+  let lastError = null;
+  for (const apiUrl of getApiCandidates(settings)) {
+    try {
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (response.ok) {
+        lastWorkingBaseUrl = deriveBaseUrlFromApi(apiUrl) || settings.appBaseUrl || DEFAULT_SETTINGS.appBaseUrl;
+        return await response.json();
+      }
+      lastError = new Error(`HTTP ${response.status} from ${apiUrl}`);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("No configured PaperTrace endpoint is reachable");
+}
+
+async function parsePdfFromUrl(pdfUrl, settings) {
+  let lastError = null;
+  for (const parseUrl of getParseCandidates(settings)) {
+    try {
+      const response = await fetch(parseUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pdfUrl }),
+      });
+
+      if (response.ok) {
+        return await response.json();
+      }
+
+      const errorText = await response.text();
+      lastError = new Error(`HTTP ${response.status} from ${parseUrl}: ${errorText}`);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("No configured PDF parse endpoint is reachable");
+}
+
+async function getCurrentTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab;
+}
+
+async function extractCurrentPaperData() {
+  const tab = await getCurrentTab();
+  if (!tab?.id) {
+    throw new Error("No active tab available");
+  }
+
+  try {
+    const paperData = await chrome.tabs.sendMessage(tab.id, { action: "extractPaperData" });
+    return paperData;
+  } catch (error) {
+    throw new Error("This page is not ready for PaperTrace extraction yet. Reload the page and try again.");
+  }
+}
+
+function buildAnalyzePayload(paperData) {
+  return {
+    title: paperData.title,
+    authors: paperData.authors || ["Unknown"],
+    year: paperData.year || new Date().getFullYear(),
+    abstractText: paperData.abstract || "",
+    fullText: paperData.text || "",
+    citations: paperData.citations || [],
+    citationInstances: paperData.citationInstances || [],
+    methodologies: paperData.methodologies || [],
+    coauthorPatterns: paperData.coauthorPatterns || [],
+    fieldHistory: paperData.fieldHistory || [],
+    doi: paperData.doi || "",
+    arxivId: paperData.arxivId || "",
+    pdfUrl: paperData.pdfUrl || "",
+    pageUrl: paperData.pageUrl || "",
+    sourceSite: paperData.sourceSite || "",
+  };
+}
+
+function buildAppHandoffPayload(payload) {
+  if (!payload) {
+    return null;
+  }
+
+  return {
+    title: payload.title || "",
+    authors: payload.authors || ["Unknown"],
+    year: payload.year || new Date().getFullYear(),
+    abstractText: payload.abstractText || "",
+    fullText: payload.pdfUrl ? "" : (payload.fullText || payload.text || "").slice(0, 4000),
+    citations: Array.isArray(payload.citations) ? payload.citations.slice(0, 50) : [],
+    citationInstances: Array.isArray(payload.citationInstances) ? payload.citationInstances.slice(0, 80) : [],
+    methodologies: Array.isArray(payload.methodologies) ? payload.methodologies.slice(0, 20) : [],
+    coauthorPatterns: Array.isArray(payload.coauthorPatterns) ? payload.coauthorPatterns.slice(0, 20) : [],
+    fieldHistory: Array.isArray(payload.fieldHistory) ? payload.fieldHistory.slice(0, 20) : [],
+    doi: payload.doi || "",
+    arxivId: payload.arxivId || "",
+    pdfUrl: payload.pdfUrl || "",
+    pageUrl: payload.pageUrl || "",
+    sourceSite: payload.sourceSite || "",
+  };
+}
+
+async function openAppUrlWithParam(key, value, settings) {
+  for (const baseUrl of getAppBaseCandidates(settings)) {
+    try {
+      const targetUrl = `${normalizeBaseUrl(baseUrl)}#${key}=${encodeURIComponent(JSON.stringify(value))}`;
+      await chrome.tabs.create({ url: targetUrl });
+      lastWorkingBaseUrl = normalizeBaseUrl(baseUrl);
+      return;
+    } catch (error) {
+      // Try next candidate.
+    }
+  }
+
+  throw new Error("Unable to open the full PaperTrace app. Check the configured app URL in Settings.");
+}
 
 async function analyzePaper() {
   const status = document.getElementById("status");
@@ -13,13 +200,16 @@ async function analyzePaper() {
   const noResults = document.getElementById("noResults");
   const analyzeBtn = document.getElementById("analyzeBtn");
 
-  // Get current tab
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  let paperData;
+  let settings;
 
-  // Extract paper info from page
-  const paperData = await chrome.tabs.sendMessage(tab.id, {
-    action: "extractPaperData",
-  });
+  try {
+    settings = await getSettings();
+    paperData = await extractCurrentPaperData();
+  } catch (error) {
+    showStatus(status, error.message || "Could not extract paper information from this page", "error");
+    return;
+  }
 
   if (!paperData.title) {
     showStatus(
@@ -34,30 +224,42 @@ async function analyzePaper() {
   analyzeBtn.disabled = true;
 
   try {
-    const response = await fetch(API_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: paperData.title,
-        authors: paperData.authors || ["Unknown"],
-        year: paperData.year || new Date().getFullYear(),
-        abstractText: paperData.abstract || "",
-        fullText: paperData.text || "",
-        citations: paperData.citations || [],
-        methodologies: paperData.methodologies || [],
-        coauthorPatterns: paperData.coauthorPatterns || [],
-        fieldHistory: paperData.fieldHistory || [],
-      }),
-    });
+    const payload = buildAnalyzePayload(paperData);
 
-    if (!response.ok) throw new Error("API error");
+    if (payload.pdfUrl) {
+      await chrome.storage.local.set({ lastPaperData: payload });
+      showStatus(status, "PDF detected — parsing through backend...", "loading");
 
-    const report = await response.json();
+      const parsed = await parsePdfFromUrl(payload.pdfUrl, settings);
+      const parsedPayload = {
+        title: parsed?.title || payload.title,
+        authors: Array.isArray(parsed?.authors) && parsed.authors.length > 0 ? parsed.authors : payload.authors,
+        year: Number(parsed?.year) || payload.year,
+        abstractText: parsed?.abstractText || payload.abstractText || "",
+        fullText: parsed?.fullText || payload.fullText || "",
+        citations: Array.isArray(parsed?.citations) ? parsed.citations : [],
+        citationInstances: Array.isArray(parsed?.citationInstances) ? parsed.citationInstances : [],
+        methodologies: Array.isArray(parsed?.methodologies) ? parsed.methodologies : payload.methodologies || [],
+        coauthorPatterns: Array.isArray(parsed?.coauthorPatterns) ? parsed.coauthorPatterns : payload.coauthorPatterns || [],
+        fieldHistory: Array.isArray(parsed?.fieldHistory) ? parsed.fieldHistory : payload.fieldHistory || [],
+        doi: payload.doi || "",
+        arxivId: payload.arxivId || "",
+        pdfUrl: payload.pdfUrl || "",
+        pageUrl: payload.pageUrl || "",
+        sourceSite: payload.sourceSite || "",
+      };
 
-    // Store report for full view
-    await chrome.storage.local.set({ lastReport: report });
+      const report = await postAnalyze(parsedPayload, settings);
+      await chrome.storage.local.set({ lastReport: report, lastPaperData: buildAppHandoffPayload(parsedPayload) });
+      displayResults(report, results, noResults, status);
+      showStatus(status, "Analysis complete", "success");
+      return;
+    }
 
-    // Display results
+    const report = await postAnalyze(payload, settings);
+
+    await chrome.storage.local.set({ lastReport: report, lastPaperData: buildAppHandoffPayload(payload) });
+
     displayResults(report, results, noResults, status);
     showStatus(status, "Analysis complete", "success");
   } catch (error) {
@@ -69,6 +271,28 @@ async function analyzePaper() {
     );
   } finally {
     analyzeBtn.disabled = false;
+  }
+}
+
+async function openFullAppWithCurrentPaper() {
+  const status = document.getElementById("status");
+
+  try {
+    const settings = await getSettings();
+    const paperData = await extractCurrentPaperData();
+    if (!paperData.title) {
+      showStatus(status, "Could not extract enough paper information to open the full app", "error");
+      return;
+    }
+
+    const payload = buildAnalyzePayload(paperData);
+    const handoffPayload = buildAppHandoffPayload(payload);
+    await chrome.storage.local.set({ lastPaperData: handoffPayload });
+    await openAppUrlWithParam("paperTracePayload", handoffPayload, settings);
+    showStatus(status, "Opening full PaperTrace app...", "success");
+  } catch (error) {
+    console.error("[PaperTrace] Open app error:", error);
+    showStatus(status, error.message || "Could not open the full app", "error");
   }
 }
 
@@ -111,11 +335,25 @@ function openSettings() {
 
 function openFullReport(e) {
   e.preventDefault();
-  chrome.storage.local.get("lastReport", (data) => {
-    if (data.lastReport) {
-      chrome.tabs.create({ url: FULL_APP_URL + "?report=" + encodeURIComponent(JSON.stringify(data.lastReport)) });
-    } else {
-      alert("No report to display. Please run an analysis first.");
-    }
-  });
+  Promise.all([chrome.storage.local.get(["lastReport", "lastPaperData"]), getSettings()])
+    .then(async ([data, settings]) => {
+      const serializedReport = data.lastReport ? JSON.stringify(data.lastReport) : "";
+      const reportIsSmallEnough = serializedReport.length > 0 && serializedReport.length < 1500;
+
+      if (data.lastReport && reportIsSmallEnough) {
+        await openAppUrlWithParam("paperTraceReport", data.lastReport, settings);
+        return;
+      }
+
+      if (data.lastPaperData) {
+        await openAppUrlWithParam("paperTracePayload", buildAppHandoffPayload(data.lastPaperData), settings);
+        return;
+      }
+
+      alert("No report or paper context is available yet. Run an analysis first or use Open Full App.");
+    })
+    .catch((error) => {
+      console.error("[PaperTrace] Open full report error:", error);
+      alert("Could not open the full PaperTrace app. Check the Settings page.");
+    });
 }

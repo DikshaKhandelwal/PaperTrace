@@ -41,6 +41,36 @@ export interface AnalysisReport {
   confidence: number; // Overall confidence level
   citationCount: number;
   verifiedCitations: number;
+  citationDetectedCount?: number;
+  citationGroundedCount?: number;
+  citationPartialCount?: number;
+  citationMismatchCount?: number;
+  citationUnverifiableCount?: number;
+  citationIntegrityScore?: number | null;
+  citationDetails?: Array<{
+    claim?: string;
+    sentence?: string;
+    citationType?: string;
+    citedDoi?: string | null;
+    citedTitle?: string | null;
+    citedYear?: number | null;
+    sourceUsed?: string;
+    compositeScore?: number;
+    semanticScore?: number;
+    keywordScore?: number;
+    numericScore?: number;
+    verdict?: string;
+    confidence?: string;
+    bestMatchingPassage?: string;
+    sourceSnippet?: string;
+    sourceAbstract?: string;
+    citationMarker?: string;
+  }>;
+  pipelineTrace?: Array<{
+    stage: string;
+    status: "pending" | "running" | "done" | "warning" | "fail";
+    detail: string;
+  }>;
 }
 
 // Cache system with TTL
@@ -712,5 +742,30 @@ export function analyzePaper(
     confidence: Math.round(confidenceTotal),
     citationCount: citations.length,
     verifiedCitations: citations.filter((c) => c.abstract).length,
+    citationDetectedCount: citations.length,
+    citationGroundedCount: citations.filter((c) => c.abstract).length,
+    citationPartialCount: 0,
+    citationMismatchCount: 0,
+    citationUnverifiableCount: citations.filter((c) => !c.abstract).length,
+    citationIntegrityScore: citations.length ? citations.filter((c) => c.abstract).length / citations.length : null,
+    citationDetails: citations.map((citation) => ({
+      claim: citation.text,
+      sentence: citation.text,
+      citationType: "supporting",
+      citedDoi: citation.doi || null,
+      citedTitle: citation.text,
+      citedYear: citation.year || null,
+      sourceUsed: citation.abstract ? "local" : "not_found",
+      compositeScore: citation.abstract ? 0.75 : 0,
+      semanticScore: citation.abstract ? 0.75 : 0,
+      keywordScore: citation.abstract ? 0.5 : 0,
+      numericScore: 0,
+      verdict: citation.abstract ? "verified" : "unverifiable",
+      confidence: citation.abstract ? "medium" : "low",
+      bestMatchingPassage: citation.abstract || "",
+      sourceSnippet: citation.abstract || "",
+      sourceAbstract: citation.abstract || "",
+      citationMarker: citation.text,
+    })),
   };
 }
