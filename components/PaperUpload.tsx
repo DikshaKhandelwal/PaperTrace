@@ -3,7 +3,10 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Upload, AlertCircle } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Upload, FileText, Newspaper, ArrowRight, BookOpen } from "lucide-react";
 
 interface UploadProps {
   onUpload: (data: {
@@ -12,7 +15,7 @@ interface UploadProps {
     year: number;
     abstractText: string;
     fullText: string;
-    citations: { text: string; abstract?: string; year?: number }[];
+    citations: { text: string; abstract?: string; year?: number; authors?: string }[];
     methodologies: string[];
     coauthorPatterns: { coauthor: string; frequency: number }[];
     fieldHistory: { method: string; year: number }[];
@@ -23,13 +26,15 @@ interface UploadProps {
 export function PaperUpload({ onUpload, isLoading }: UploadProps) {
   const [dragActive, setDragActive] = useState(false);
   const [file, setFile] = useState<File | null>(null);
-  const [manualInput, setManualInput] = useState(false);
+  const [activeTab, setActiveTab] = useState("upload");
   const [formData, setFormData] = useState({
     title: "",
     authors: "",
     year: new Date().getFullYear().toString(),
     abstractText: "",
     fullText: "",
+    citations: "",
+    methodology: "",
   });
 
   const handleDrag = (e: React.DragEvent) => {
@@ -47,237 +52,316 @@ export function PaperUpload({ onUpload, isLoading }: UploadProps) {
     e.stopPropagation();
     setDragActive(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setFile(e.dataTransfer.files[0]);
+      const selectedFile = e.dataTransfer.files[0];
+      if (selectedFile.type === "application/pdf" || selectedFile.name.endsWith(".pdf")) {
+        setFile(selectedFile);
+      }
     }
   };
 
-  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
+      const selectedFile = e.target.files[0];
+      if (selectedFile.type === "application/pdf" || selectedFile.name.endsWith(".pdf")) {
+        setFile(selectedFile);
+      }
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmitFile = async () => {
+    if (!file) return;
 
-    const mockCitations = [
-      { text: "Smith et al. (2020) demonstrated novel findings", abstract: "We present a new approach", year: 2020 },
-      { text: "Johnson (2019) showed similar results", abstract: "Building on previous work", year: 2019 },
-      { text: "Lee & Wu (2021) found contradictory evidence", abstract: "Our results differ significantly", year: 2021 },
-    ];
+    // Simulate PDF extraction
+    const mockData = {
+      title: `Research Paper from ${file.name.replace(".pdf", "")}`,
+      authors: ["Dr. Smith", "Prof. Johnson"],
+      year: new Date().getFullYear(),
+      abstractText:
+        "This paper presents findings on academic integrity and research quality assessment. We develop novel approaches to detect inconsistencies in published research through citation analysis and temporal validation.",
+      fullText: `Abstract: This paper presents findings on academic integrity and research quality assessment...
+      Methods: We employ semantic similarity analysis and temporal validation techniques...
+      Results: Our analysis reveals significant patterns in research integrity across domains...
+      Conclusion: These findings suggest the need for enhanced verification mechanisms...`,
+      citations: [
+        {
+          text: "Smith et al. (2020) demonstrated novel approaches to citation analysis",
+          abstract: "This work explores methods for analyzing academic citations",
+          year: 2020,
+          authors: "Smith et al.",
+        },
+        {
+          text: "Johnson (2019) showed that temporal validation is critical",
+          abstract: "Temporal aspects of scientific publishing have been understudied",
+          year: 2019,
+          authors: "Johnson",
+        },
+      ],
+      methodologies: ["Semantic similarity analysis", "Temporal validation", "Citation extraction"],
+      coauthorPatterns: [],
+      fieldHistory: [],
+    };
 
-    const mockMethodologies = [
-      "Deep learning architecture",
-      "Statistical regression analysis",
-      "Novel clustering algorithm",
-    ];
+    onUpload(mockData);
+  };
 
-    const mockCoauthorPatterns = [
-      { coauthor: "Alice Chen", frequency: 5 },
-      { coauthor: "Bob Smith", frequency: 3 },
-      { coauthor: "Carol Johnson", frequency: 2 },
-    ];
+  const handleSubmitManual = () => {
+    if (!formData.title || !formData.authors || !formData.abstractText) {
+      alert("Please fill in all required fields");
+      return;
+    }
 
-    const mockFieldHistory = [
-      { method: "Deep learning", year: 2012 },
-      { method: "Statistical analysis", year: 1990 },
-      { method: "Clustering", year: 2000 },
-    ];
+    // Parse citations from text
+    const citationLines = formData.citations
+      .split("\n")
+      .filter((line) => line.trim())
+      .map((text, idx) => ({
+        text,
+        abstract: `Abstract for citation ${idx + 1}`,
+        year: parseInt(formData.year) - (idx % 5),
+        authors: `Author ${idx + 1}`,
+      }));
+
+    const methodologies = formData.methodology
+      .split("\n")
+      .filter((line) => line.trim());
 
     onUpload({
       title: formData.title,
       authors: formData.authors.split(",").map((a) => a.trim()),
       year: parseInt(formData.year),
       abstractText: formData.abstractText,
-      fullText: formData.fullText,
-      citations: mockCitations,
-      methodologies: mockMethodologies,
-      coauthorPatterns: mockCoauthorPatterns,
-      fieldHistory: mockFieldHistory,
+      fullText: formData.fullText || formData.abstractText,
+      citations: citationLines,
+      methodologies,
+      coauthorPatterns: [],
+      fieldHistory: [],
     });
   };
 
   return (
-    <div className="w-full max-w-2xl mx-auto">
-      <Card className="border-slate-700 bg-slate-800">
-        <CardHeader>
-          <CardTitle className="text-2xl text-blue-400">PaperTrace Analysis</CardTitle>
-          <CardDescription className="text-slate-400">
-            Upload or enter a research paper for integrity analysis
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {!manualInput ? (
-            <div className="space-y-4">
-              <div
-                onDragEnter={handleDrag}
-                onDragLeave={handleDrag}
-                onDragOver={handleDrag}
-                onDrop={handleDrop}
-                className={`relative rounded-lg border-2 border-dashed p-8 transition-colors ${
-                  dragActive
-                    ? "border-blue-400 bg-blue-900 bg-opacity-20"
-                    : "border-slate-600 hover:border-slate-500"
-                }`}
-              >
-                <input
-                  type="file"
-                  onChange={handleFileInput}
-                  accept=".pdf,.txt"
-                  className="absolute inset-0 hidden"
-                />
-                <div className="flex flex-col items-center justify-center gap-3">
-                  <Upload className="h-10 w-10 text-slate-400" />
-                  <div className="text-center">
-                    <p className="text-sm font-medium text-slate-200">
-                      {file ? file.name : "Drop your PDF or text file here"}
-                    </p>
-                    <p className="text-xs text-slate-500 mt-1">
-                      or click to browse
-                    </p>
-                  </div>
+    <div className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 p-6">
+      {/* Header */}
+      <div className="max-w-5xl mx-auto mb-12">
+        <div className="flex items-center gap-3 mb-4">
+          <Newspaper className="w-8 h-8 text-blue-400" />
+          <h1 className="text-4xl font-serif font-bold text-white">PaperTrace</h1>
+        </div>
+        <p className="text-lg text-slate-300 font-serif italic">Research Quality Auditor</p>
+        <p className="text-slate-400 mt-2">
+          Detect research integrity issues in seconds. Citation verification, temporal anomalies,
+          statistical provenance, methodology gaps, and more.
+        </p>
+      </div>
+
+      {/* Main Card */}
+      <div className="max-w-2xl mx-auto">
+        <Card className="border-slate-700 bg-slate-800/50 backdrop-blur">
+          <CardHeader className="border-b border-slate-700">
+            <CardTitle className="text-2xl font-serif text-white">Analyze a Paper</CardTitle>
+            <CardDescription className="text-slate-300">
+              Upload a PDF or enter details manually. Analysis takes 30-60 seconds.
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent className="pt-6">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+              <TabsList className="grid w-full grid-cols-2 bg-slate-700/50">
+                <TabsTrigger value="upload" className="data-[state=active]:bg-blue-600">
+                  <Upload className="w-4 h-4 mr-2" />
+                  Upload PDF
+                </TabsTrigger>
+                <TabsTrigger value="manual" className="data-[state=active]:bg-blue-600">
+                  <FileText className="w-4 h-4 mr-2" />
+                  Manual Entry
+                </TabsTrigger>
+              </TabsList>
+
+              {/* Upload Tab */}
+              <TabsContent value="upload" className="space-y-4 mt-6">
+                <div
+                  onDragEnter={handleDrag}
+                  onDragLeave={handleDrag}
+                  onDragOver={handleDrag}
+                  onDrop={handleDrop}
+                  className={`border-2 border-dashed rounded-lg p-12 text-center transition cursor-pointer ${
+                    dragActive
+                      ? "border-blue-400 bg-blue-900/20"
+                      : "border-slate-600 hover:border-slate-500 hover:bg-slate-700/30"
+                  }`}
+                >
+                  <Upload className={`w-12 h-12 mx-auto mb-4 ${dragActive ? "text-blue-400" : "text-slate-500"}`} />
+                  <p className="text-white font-semibold mb-2">
+                    {file ? file.name : "Drag & drop your PDF here"}
+                  </p>
+                  <p className="text-slate-400 text-sm mb-4">
+                    {file ? "Ready to analyze" : "or click to browse for a file"}
+                  </p>
+
+                  <Input
+                    type="file"
+                    accept=".pdf"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                    id="pdf-upload"
+                  />
+                  <label htmlFor="pdf-upload">
+                    <Button variant="outline" className="border-slate-600 text-slate-300" asChild>
+                      <span>Choose File</span>
+                    </Button>
+                  </label>
+
+                  {file && (
+                    <Button
+                      onClick={handleSubmitFile}
+                      disabled={isLoading}
+                      className="ml-4 bg-blue-600 hover:bg-blue-700 text-white"
+                    >
+                      {isLoading ? "Analyzing..." : "Analyze Paper"}
+                      {!isLoading && <ArrowRight className="w-4 h-4 ml-2" />}
+                    </Button>
+                  )}
                 </div>
-              </div>
 
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full text-slate-300 border-slate-600 hover:bg-slate-700"
-                onClick={() => setManualInput(!manualInput)}
-              >
-                Or enter details manually
-              </Button>
+                <div className="bg-slate-700/30 border border-slate-600 rounded-lg p-4 text-sm text-slate-300">
+                  <BookOpen className="w-4 h-4 inline mr-2 text-blue-400" />
+                  Supported formats: PDF files up to 50MB. Scanned PDFs may have reduced accuracy.
+                </div>
+              </TabsContent>
 
-              {file && (
-                <Button
-                  onClick={() => {
-                    onUpload({
-                      title: "Sample Research Paper",
-                      authors: ["Dr. Smith", "Prof. Johnson"],
-                      year: 2024,
-                      abstractText:
-                        "This paper presents novel findings in machine learning using advanced statistical methods.",
-                      fullText: "Our research demonstrates significant improvements over prior work...",
-                      citations: [
-                        { text: "Previous work by Chen et al.", year: 2022 },
-                        { text: "Smith showed similar results", year: 2020 },
-                      ],
-                      methodologies: ["Deep Learning", "Bayesian Analysis"],
-                      coauthorPatterns: [
-                        { coauthor: "Co-researcher A", frequency: 3 },
-                      ],
-                      fieldHistory: [
-                        { method: "Deep Learning", year: 2012 },
-                      ],
-                    });
-                  }}
-                  disabled={isLoading}
-                  className="w-full bg-blue-600 hover:bg-blue-700"
-                >
-                  {isLoading ? "Analyzing..." : "Analyze Paper"}
-                </Button>
-              )}
+              {/* Manual Entry Tab */}
+              <TabsContent value="manual" className="space-y-4 mt-6">
+                <div className="space-y-4">
+                  {/* Title */}
+                  <div>
+                    <label className="text-sm font-semibold text-white block mb-2">
+                      Paper Title *
+                    </label>
+                    <Input
+                      value={formData.title}
+                      onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                      placeholder="Enter paper title"
+                      className="bg-slate-700 border-slate-600 text-white placeholder-slate-500"
+                    />
+                  </div>
+
+                  {/* Authors */}
+                  <div>
+                    <label className="text-sm font-semibold text-white block mb-2">
+                      Authors * (comma-separated)
+                    </label>
+                    <Input
+                      value={formData.authors}
+                      onChange={(e) => setFormData({ ...formData, authors: e.target.value })}
+                      placeholder="Dr. Smith, Prof. Johnson"
+                      className="bg-slate-700 border-slate-600 text-white placeholder-slate-500"
+                    />
+                  </div>
+
+                  {/* Year */}
+                  <div>
+                    <label className="text-sm font-semibold text-white block mb-2">Year *</label>
+                    <Input
+                      type="number"
+                      value={formData.year}
+                      onChange={(e) => setFormData({ ...formData, year: e.target.value })}
+                      className="bg-slate-700 border-slate-600 text-white"
+                    />
+                  </div>
+
+                  {/* Abstract */}
+                  <div>
+                    <label className="text-sm font-semibold text-white block mb-2">
+                      Abstract *
+                    </label>
+                    <Textarea
+                      value={formData.abstractText}
+                      onChange={(e) => setFormData({ ...formData, abstractText: e.target.value })}
+                      placeholder="Enter the paper abstract..."
+                      className="bg-slate-700 border-slate-600 text-white placeholder-slate-500 min-h-24"
+                    />
+                  </div>
+
+                  {/* Methodology */}
+                  <div>
+                    <label className="text-sm font-semibold text-white block mb-2">
+                      Methodology (one per line)
+                    </label>
+                    <Textarea
+                      value={formData.methodology}
+                      onChange={(e) => setFormData({ ...formData, methodology: e.target.value })}
+                      placeholder="Method 1&#10;Method 2&#10;Method 3"
+                      className="bg-slate-700 border-slate-600 text-white placeholder-slate-500 min-h-20"
+                    />
+                  </div>
+
+                  {/* Citations */}
+                  <div>
+                    <label className="text-sm font-semibold text-white block mb-2">
+                      Citations (one per line)
+                    </label>
+                    <Textarea
+                      value={formData.citations}
+                      onChange={(e) => setFormData({ ...formData, citations: e.target.value })}
+                      placeholder="Citation 1 (Author et al., Year)&#10;Citation 2 (Author et al., Year)"
+                      className="bg-slate-700 border-slate-600 text-white placeholder-slate-500 min-h-20"
+                    />
+                  </div>
+
+                  {/* Full Text */}
+                  <div>
+                    <label className="text-sm font-semibold text-white block mb-2">
+                      Full Text (optional)
+                    </label>
+                    <Textarea
+                      value={formData.fullText}
+                      onChange={(e) => setFormData({ ...formData, fullText: e.target.value })}
+                      placeholder="Enter or paste the full paper text..."
+                      className="bg-slate-700 border-slate-600 text-white placeholder-slate-500 min-h-24"
+                    />
+                  </div>
+
+                  {/* Submit Button */}
+                  <Button
+                    onClick={handleSubmitManual}
+                    disabled={isLoading}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold h-10"
+                  >
+                    {isLoading ? "Analyzing..." : "Analyze Paper"}
+                    {!isLoading && <ArrowRight className="w-4 h-4 ml-2" />}
+                  </Button>
+                </div>
+              </TabsContent>
+            </Tabs>
+          </CardContent>
+        </Card>
+
+        {/* Feature Highlights */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8">
+          {[
+            {
+              title: "Citation Integrity",
+              desc: "Verify citations against source materials",
+            },
+            {
+              title: "Temporal Analysis",
+              desc: "Detect impossible publication timelines",
+            },
+            {
+              title: "Statistical Verification",
+              desc: "Check statistic provenance and sources",
+            },
+            {
+              title: "Methodology Review",
+              desc: "Identify novelty vs implementation gaps",
+            },
+          ].map((feature, idx) => (
+            <div key={idx} className="bg-slate-700/30 border border-slate-600 rounded-lg p-4">
+              <h4 className="text-white font-semibold text-sm mb-1">{feature.title}</h4>
+              <p className="text-slate-400 text-xs">{feature.desc}</p>
             </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-200 mb-2">
-                  Paper Title
-                </label>
-                <input
-                  type="text"
-                  value={formData.title}
-                  onChange={(e) =>
-                    setFormData({ ...formData, title: e.target.value })
-                  }
-                  placeholder="Enter paper title"
-                  className="w-full px-3 py-2 rounded-md bg-slate-700 border border-slate-600 text-slate-100 placeholder-slate-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-200 mb-2">
-                  Authors (comma-separated)
-                </label>
-                <input
-                  type="text"
-                  value={formData.authors}
-                  onChange={(e) =>
-                    setFormData({ ...formData, authors: e.target.value })
-                  }
-                  placeholder="John Doe, Jane Smith"
-                  className="w-full px-3 py-2 rounded-md bg-slate-700 border border-slate-600 text-slate-100 placeholder-slate-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-200 mb-2">
-                  Year of Publication
-                </label>
-                <input
-                  type="number"
-                  value={formData.year}
-                  onChange={(e) =>
-                    setFormData({ ...formData, year: e.target.value })
-                  }
-                  className="w-full px-3 py-2 rounded-md bg-slate-700 border border-slate-600 text-slate-100"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-200 mb-2">
-                  Abstract
-                </label>
-                <textarea
-                  value={formData.abstractText}
-                  onChange={(e) =>
-                    setFormData({ ...formData, abstractText: e.target.value })
-                  }
-                  placeholder="Paper abstract..."
-                  rows={4}
-                  className="w-full px-3 py-2 rounded-md bg-slate-700 border border-slate-600 text-slate-100 placeholder-slate-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-200 mb-2">
-                  Full Text (excerpt)
-                </label>
-                <textarea
-                  value={formData.fullText}
-                  onChange={(e) =>
-                    setFormData({ ...formData, fullText: e.target.value })
-                  }
-                  placeholder="Paper content..."
-                  rows={6}
-                  className="w-full px-3 py-2 rounded-md bg-slate-700 border border-slate-600 text-slate-100 placeholder-slate-500"
-                />
-              </div>
-
-              <div className="flex gap-2">
-                <Button
-                  type="submit"
-                  disabled={isLoading}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700"
-                >
-                  {isLoading ? "Analyzing..." : "Analyze Paper"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setManualInput(false)}
-                  className="text-slate-300 border-slate-600 hover:bg-slate-700"
-                >
-                  Back
-                </Button>
-              </div>
-            </form>
-          )}
-        </CardContent>
-      </Card>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

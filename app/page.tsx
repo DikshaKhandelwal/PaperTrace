@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { PaperUpload } from "@/components/PaperUpload";
 import { ResultsDashboard } from "@/components/ResultsDashboard";
-import { AnalysisReport } from "@/lib/detectionEngine";
+import { analyzePaper } from "@/lib/detectionEngine";
+import type { AnalysisReport } from "@/lib/detectionEngine";
 
 export default function Page() {
   const [report, setReport] = useState<AnalysisReport | null>(null);
@@ -15,25 +16,31 @@ export default function Page() {
     year: number;
     abstractText: string;
     fullText: string;
-    citations: { text: string; abstract?: string; year?: number }[];
+    citations: { text: string; abstract?: string; year?: number; authors?: string }[];
     methodologies: string[];
     coauthorPatterns: { coauthor: string; frequency: number }[];
     fieldHistory: { method: string; year: number }[];
   }) => {
     setIsLoading(true);
     try {
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
+      // Run analysis locally using detection engine
+      const analysisResult = analyzePaper(
+        data.title,
+        data.authors,
+        data.year,
+        data.abstractText,
+        data.methodologies.join("\n"),
+        data.fullText,
+        data.citations.map((c, idx) => ({
+          id: `citation-${idx}`,
+          text: c.text,
+          year: c.year,
+          authors: c.authors,
+          abstract: c.abstract,
+        }))
+      );
 
-      if (!response.ok) {
-        throw new Error("Analysis failed");
-      }
-
-      const result: AnalysisReport = await response.json();
-      setReport(result);
+      setReport(analysisResult);
     } catch (error) {
       console.error("[v0] Error analyzing paper:", error);
       alert("Failed to analyze paper. Please try again.");
@@ -43,28 +50,15 @@ export default function Page() {
   };
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 py-8 px-4">
-      <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="mb-8 text-center">
-          <h1 className="text-4xl font-bold text-white mb-2">
-            PaperTrace
-          </h1>
-          <p className="text-slate-400 text-lg">
-            Advanced Research Paper Integrity Analysis
-          </p>
-        </div>
-
-        {/* Content */}
-        {!report ? (
-          <PaperUpload onUpload={handleUpload} isLoading={isLoading} />
-        ) : (
-          <ResultsDashboard
-            report={report}
-            onBack={() => setReport(null)}
-          />
-        )}
-      </div>
+    <main className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900">
+      {!report ? (
+        <PaperUpload onUpload={handleUpload} isLoading={isLoading} />
+      ) : (
+        <ResultsDashboard
+          report={report}
+          onBack={() => setReport(null)}
+        />
+      )}
     </main>
   );
 }
