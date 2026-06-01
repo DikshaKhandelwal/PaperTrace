@@ -388,29 +388,20 @@ function openFullReport(e) {
   e.preventDefault();
   Promise.all([chrome.storage.local.get(["lastReport", "lastPaperData"]), getSettings()])
     .then(async ([data, settings]) => {
-      const VERCEL_BASE = "https://v0-papertrace.vercel.app";
       const serializedReport = data.lastReport ? JSON.stringify(data.lastReport) : "";
       const reportIsSmallEnough = serializedReport.length > 0 && serializedReport.length < 1500;
 
-      try {
-        if (data.lastReport && reportIsSmallEnough) {
-          const targetUrl = `${VERCEL_BASE}#paperTraceReport=${encodeURIComponent(serializedReport)}`;
-          await chrome.tabs.create({ url: targetUrl });
-          return;
-        }
-
-        if (data.lastPaperData) {
-          const payload = buildAppHandoffPayload(data.lastPaperData);
-          const targetUrl = `${VERCEL_BASE}#paperTracePayload=${encodeURIComponent(JSON.stringify(payload))}`;
-          await chrome.tabs.create({ url: targetUrl });
-          return;
-        }
-
-        alert("No report or paper context is available yet. Run an analysis first or use Open Full App.");
-      } catch (err) {
-        console.error("[PaperTrace] Open full report (forced Vercel) error:", err);
-        alert("Could not open the full PaperTrace app. Check the Settings page.");
+      if (data.lastReport && reportIsSmallEnough) {
+        await openAppUrlWithParam("paperTraceReport", data.lastReport, settings);
+        return;
       }
+
+      if (data.lastPaperData) {
+        await openAppUrlWithParam("paperTracePayload", buildAppHandoffPayload(data.lastPaperData), settings);
+        return;
+      }
+
+      alert("No report or paper context is available yet. Run an analysis first or use Open Full App.");
     })
     .catch((error) => {
       console.error("[PaperTrace] Open full report error:", error);

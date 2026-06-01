@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "PaperTrace",
+  "version": "1.0.0",
+  "description": "Analyze research papers for integrity issues in real-time",
+  "permissions": [
+    "scripting",
+    "activeTab",
+    "storage",
+    "tabs"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Analyze this paper with PaperTrace"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://scholar.google.com/*",
+        "*://arxiv.org/*",
+        "*://doi.org/*",
+        "*://*.researchgate.net/*",
+        "*://*.semanticscholar.org/*"
+      ],
+      "js": ["content.js"]
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "host_permissions": [
+    "*://scholar.google.com/*",
+    "*://arxiv.org/*",
+    "*://doi.org/*",
+    "*://*.researchgate.net/*",
+    "*://*.semanticscholar.org/*",
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*",
+    "http://localhost:3001/*",
+    "http://127.0.0.1:3001/*",
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8001/*",
+    "http://127.0.0.1:8001/*",
+    "https://papertrace-1.onrender.com/*"
+  ]
+}

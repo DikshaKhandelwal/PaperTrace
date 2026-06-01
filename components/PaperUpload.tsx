@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Upload, FileText, Newspaper, ArrowRight, BookOpen, Download } from "lucide-react";
@@ -287,13 +288,34 @@ export function PaperUpload({ onUpload, isLoading, onPipelineUpdate }: UploadPro
                     <Button
                       onClick={handleSubmitFile}
                       disabled={isLoading}
-                      className="ml-4 bg-[#8b5e34] text-[#fff8ef] hover:bg-[#6f4726]"
+                      className="ml-4 bg-[#8b5e34] text-[#fff8ef] hover:bg-[#6f4726] disabled:opacity-90"
                     >
-                      {isLoading ? "Analyzing..." : "Analyze Paper"}
-                      {!isLoading && <ArrowRight className="w-4 h-4 ml-2" />}
+                      {isLoading ? (
+                        <>
+                          <Spinner className="mr-2 h-4 w-4 text-[#fff8ef]" />
+                          Analyzing paper...
+                        </>
+                      ) : (
+                        <>
+                          Analyze Paper
+                          <ArrowRight className="w-4 h-4 ml-2" />
+                        </>
+                      )}
                     </Button>
                   )}
                 </div>
+
+                {isLoading && (
+                  <div className="rounded-lg border border-[#d5c3a4] bg-[#fffaf2] p-4 text-sm text-[#4b3a2a] shadow-[0_8px_24px_rgba(80,57,31,0.05)]">
+                    <div className="flex items-center gap-3">
+                      <Spinner className="h-5 w-5 text-[#8b5e34]" />
+                      <div>
+                        <p className="font-semibold text-[#1b140e]">PaperTrace is analyzing your paper</p>
+                        <p className="text-[#665544]">Parsing text, extracting citations, and scoring the six signals.</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="rounded-lg border border-[#d5c3a4] bg-[#fffaf2] p-4 text-sm text-[#4b3a2a]">
                   <BookOpen className="mr-2 inline h-4 w-4 text-[#8b5e34]" />
@@ -397,10 +419,19 @@ export function PaperUpload({ onUpload, isLoading, onPipelineUpdate }: UploadPro
                   <Button
                     onClick={handleSubmitManual}
                     disabled={isLoading}
-                    className="h-10 w-full bg-[#8b5e34] font-semibold text-[#fff8ef] hover:bg-[#6f4726]"
+                    className="h-10 w-full bg-[#8b5e34] font-semibold text-[#fff8ef] hover:bg-[#6f4726] disabled:opacity-90"
                   >
-                    {isLoading ? "Analyzing..." : "Analyze Paper"}
-                    {!isLoading && <ArrowRight className="w-4 h-4 ml-2" />}
+                    {isLoading ? (
+                      <>
+                        <Spinner className="mr-2 h-4 w-4 text-[#fff8ef]" />
+                        Analyzing paper...
+                      </>
+                    ) : (
+                      <>
+                        Analyze Paper
+                        <ArrowRight className="w-4 h-4 ml-2" />
+                      </>
+                    )}
                   </Button>
                 </div>
               </TabsContent>

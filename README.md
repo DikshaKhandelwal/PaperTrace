@@ -2,11 +2,39 @@
 
 PaperTrace is a research-paper analysis tool that checks citation grounding, temporal consistency, numeric provenance, methodology alignment, and related integrity signals across uploaded PDFs, manually entered papers, and supported academic websites through a browser extension.
 
+**Why PaperTrace**
+
+There are far more papers published today than any single reader can reasonably evaluate. Much of that volume is noise: papers produced to exist rather than to advance reliable knowledge — poorly grounded citations, unreproducible results, and claims unsupported by their data. PaperTrace is not an "AI detector." It is a research-quality auditor: it surfaces citation grounding, numeric and methodological provenance, timeline and consistency checks, and other integrity signals so you can see which papers matter and why. In short, PaperTrace makes it expensive to hide hollow science.
+
 It has three main parts:
 
 - a **Next.js web app** for upload, parsing, analysis, and report viewing
 - a **FastAPI backend** for PDF parsing and citation-oriented analysis
 - a **Chrome extension** for analyzing papers directly from sites like arXiv and Semantic Scholar
+
+## Screenshots
+
+### Upload screen
+
+![Upload screen](public/screenshots/upload.png)
+
+### Live analysis pipeline
+
+![Pipeline screen](public/screenshots/pipeline.png)
+
+### Results dashboard
+
+![Results screen 1](public/screenshots/result_screen_1.png)
+
+![Results screen 2](public/screenshots/result_screen_2.png)
+
+### Signals view
+
+![Signals screen](public/screenshots/signals.png)
+
+### Extension popup
+
+![Extension screen](public/screenshots/extension.png)
 
 ---
 
