@@ -3,7 +3,7 @@
 const DEFAULT_APP_BASE_URLS = ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"];
 const DEFAULT_BACKEND_BASE_URLS = ["http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:8001", "http://127.0.0.1:8001", "https://papertrace-1.onrender.com"];
 const DEFAULT_SETTINGS = {
-  apiUrl: "http://localhost:3000/api/analyze",
+  apiUrl: "https://papertrace-1.onrender.com/analyze",
   appBaseUrl: "http://localhost:3000",
   autoAnalyze: false,
 };
@@ -29,6 +29,37 @@ function deriveBackendBaseFromApi(apiUrl) {
   return normalized.replace(/\/api\/analyze$/i, "").replace(/\/analyze$/i, "");
 }
 
+async function canReach(url, timeoutMs = 1200) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { method: "GET", signal: controller.signal, cache: "no-store" });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function shouldPreferLocalBackend() {
+  for (const baseUrl of DEFAULT_BACKEND_BASE_URLS.filter((url) => url.includes("localhost") || url.includes("127.0.0.1"))) {
+    if (await canReach(`${baseUrl}/healthz`, 700)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function shouldPreferLocalApp() {
+  for (const baseUrl of DEFAULT_APP_BASE_URLS) {
+    if (await canReach(baseUrl, 700)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function getSettings() {
   const settings = await chrome.storage.sync.get(["apiUrl", "appBaseUrl", "autoAnalyze"]);
   return {
@@ -38,42 +69,62 @@ async function getSettings() {
   };
 }
 
-function getApiCandidates(settings) {
+async function getApiCandidates(settings) {
   const configuredApi = normalizeBaseUrl(settings.apiUrl);
   const configuredBase = normalizeBaseUrl(settings.appBaseUrl || deriveBaseUrlFromApi(configuredApi));
   const configuredBackendBase = normalizeBaseUrl(deriveBackendBaseFromApi(configuredApi));
-  const candidates = [
+  const initial = [
     configuredApi,
     configuredBase ? `${configuredBase}/api/analyze` : "",
     configuredBackendBase ? `${configuredBackendBase}/analyze` : "",
     ...DEFAULT_APP_BASE_URLS.map((base) => `${base}/api/analyze`),
     ...DEFAULT_BACKEND_BASE_URLS.map((base) => `${base}/analyze`),
   ].filter(Boolean);
-  return [...new Set(candidates)];
+  const candidates = [...new Set(initial)];
+  if (!(await shouldPreferLocalBackend())) {
+    return candidates;
+  }
+
+  const locals = candidates.filter((url) => url.includes("localhost") || url.includes("127.0.0.1"));
+  const remotes = candidates.filter((url) => !locals.includes(url));
+  return [...locals, ...remotes];
 }
 
-function getAppBaseCandidates(settings) {
+async function getAppBaseCandidates(settings) {
   const configuredBase = normalizeBaseUrl(settings.appBaseUrl || deriveBaseUrlFromApi(settings.apiUrl));
-  const candidates = [configuredBase, ...DEFAULT_APP_BASE_URLS].filter(Boolean);
-  return [...new Set(candidates)];
+  const candidates = [...new Set([configuredBase, ...DEFAULT_APP_BASE_URLS].filter(Boolean))];
+  if (!(await shouldPreferLocalApp())) {
+    return candidates;
+  }
+
+  const locals = candidates.filter((url) => url.includes("localhost") || url.includes("127.0.0.1"));
+  const remotes = candidates.filter((url) => !locals.includes(url));
+  return [...locals, ...remotes];
 }
 
-function getParseCandidates(settings) {
+async function getParseCandidates(settings) {
   const configuredApi = normalizeBaseUrl(settings.apiUrl);
   const configuredAppBase = normalizeBaseUrl(settings.appBaseUrl || deriveBaseUrlFromApi(configuredApi));
   const configuredBackendBase = normalizeBaseUrl(deriveBackendBaseFromApi(configuredApi));
-  const candidates = [
+  const initial = [
     configuredAppBase ? `${configuredAppBase}/api/parse-pdf` : "",
     configuredBackendBase ? `${configuredBackendBase}/parse-pdf-url` : "",
     ...DEFAULT_APP_BASE_URLS.map((base) => `${base}/api/parse-pdf`),
     ...DEFAULT_BACKEND_BASE_URLS.map((base) => `${base}/parse-pdf-url`),
   ].filter(Boolean);
-  return [...new Set(candidates)];
+  const candidates = [...new Set(initial)];
+  if (!(await shouldPreferLocalBackend())) {
+    return candidates;
+  }
+
+  const locals = candidates.filter((url) => url.includes("localhost") || url.includes("127.0.0.1"));
+  const remotes = candidates.filter((url) => !locals.includes(url));
+  return [...locals, ...remotes];
 }
 
 async function postAnalyze(payload, settings) {
   let lastError = null;
-  for (const apiUrl of getApiCandidates(settings)) {
+  for (const apiUrl of await getApiCandidates(settings)) {
     try {
       const response = await fetch(apiUrl, {
         method: "POST",
@@ -94,7 +145,7 @@ async function postAnalyze(payload, settings) {
 
 async function parsePdfFromUrl(pdfUrl, settings) {
   let lastError = null;
-  for (const parseUrl of getParseCandidates(settings)) {
+  for (const parseUrl of await getParseCandidates(settings)) {
     try {
       const response = await fetch(parseUrl, {
         method: "POST",
@@ -180,7 +231,7 @@ function buildAppHandoffPayload(payload) {
 }
 
 async function openAppUrlWithParam(key, value, settings) {
-  for (const baseUrl of getAppBaseCandidates(settings)) {
+  for (const baseUrl of await getAppBaseCandidates(settings)) {
     try {
       const targetUrl = `${normalizeBaseUrl(baseUrl)}#${key}=${encodeURIComponent(JSON.stringify(value))}`;
       await chrome.tabs.create({ url: targetUrl });

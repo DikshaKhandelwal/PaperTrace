@@ -9,7 +9,7 @@ const messageDiv = document.getElementById("message");
 
 const DEFAULT_SETTINGS = {
   appBaseUrl: "http://localhost:3000",
-  apiUrl: "http://localhost:3000/api/analyze",
+  apiUrl: "https://papertrace-1.onrender.com/analyze",
   autoAnalyze: false,
 };
 

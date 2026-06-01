@@ -1,20 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
 import { analyzePaper as localAnalyze, AnalysisReport } from "@/lib/detectionEngine";
 
-async function callBackend(body: any) {
-  try {
-    const BACKEND_URL = process.env.PAPERTRACE_BACKEND || "http://localhost:8000";
-    const res = await fetch(`${BACKEND_URL}/analyze`, {
+function getBackendCandidates(request: NextRequest) {
+  const deployedBackend = (process.env.PAPERTRACE_BACKEND || "https://papertrace-1.onrender.com").replace(/\/+$/, "");
+  const localBackends = ["http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:8001", "http://127.0.0.1:8001"];
+  const hostname = request.nextUrl.hostname;
+  const isLocalRequest = hostname === "localhost" || hostname === "127.0.0.1";
+
+  return isLocalRequest ? [...localBackends, deployedBackend] : [deployedBackend, ...localBackends];
+}
+
+async function callBackend(body: any, request: NextRequest) {
+  const backendCandidates = getBackendCandidates(request);
+  for (const backendUrl of backendCandidates) {
+    try {
+      console.info(`[api/analyze] trying backend candidate: ${backendUrl}`);
+      const res = await fetch(`${backendUrl}/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`Backend responded ${res.status}`);
-    return await res.json();
-  } catch (err) {
-    console.warn("Backend unavailable, falling back to local engine:", err);
-    return null;
+
+      if (res.ok) {
+        console.info(`[api/analyze] using backend candidate: ${backendUrl}`);
+        return await res.json();
+      }
+
+      console.warn(`Backend candidate failed ${backendUrl}:`, res.status);
+    } catch (err) {
+      console.warn(`Backend candidate unavailable ${backendUrl}:`, err);
+    }
   }
+
+  console.warn("All backend candidates unavailable, falling back to local engine");
+  return null;
 }
 
 export async function POST(request: NextRequest) {
@@ -28,7 +47,7 @@ export async function POST(request: NextRequest) {
     }
 
     // First try backend pipeline
-    const backendResult = await callBackend({ title, authors, year, abstractText, fullText, citations, citationInstances });
+    const backendResult = await callBackend({ title, authors, year, abstractText, fullText, citations, citationInstances }, request);
     if (backendResult) {
       if (backendResult?.signals) {
         return NextResponse.json({

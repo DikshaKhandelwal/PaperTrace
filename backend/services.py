@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import re
 import time
@@ -14,6 +15,9 @@ from lxml import etree
 load_dotenv()
 
 SEMANTIC_SCHOLAR = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 GROBID_URL = os.getenv("GROBID_URL", "http://localhost:8070")
 GROBID_FALLBACK_URLS = [
     url.strip().rstrip("/")
@@ -27,6 +31,8 @@ TEI_NS = {
     "tei": "http://www.tei-c.org/ns/1.0",
     "xml": "http://www.w3.org/XML/1998/namespace",
 }
+
+logger = logging.getLogger("papertrace.services")
 
 # Simple in-memory cache for hackathon use
 _cache: Dict[str, Dict] = {}
@@ -52,6 +58,26 @@ def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
 
+def _extract_json_blob(text: str) -> Optional[Dict[str, Any]]:
+    if not text:
+        return None
+    text = text.strip()
+    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fence_match:
+        text = fence_match.group(1)
+    else:
+        brace_match = re.search(r"(\{.*\})", text, flags=re.DOTALL)
+        if brace_match:
+            text = brace_match.group(1)
+    try:
+        import json
+
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
 def _openalex_abstract_to_text(inverted_index: Any) -> str:
     if not isinstance(inverted_index, dict) or not inverted_index:
         return ""
@@ -64,6 +90,12 @@ def _openalex_abstract_to_text(inverted_index: Any) -> str:
                 positions.append((index, token.replace("_", " ")))
     positions.sort(key=lambda item: item[0])
     return _normalize_text(" ".join(token for _, token in positions))
+
+
+def _has_retrievable_text(result: Optional[dict]) -> bool:
+    if not isinstance(result, dict):
+        return False
+    return bool((result.get("full_text") or "").strip() or (result.get("abstract") or "").strip())
 
 
 def _first_year(text: str | None) -> Optional[int]:
@@ -960,8 +992,9 @@ async def _try_semantic_scholar(doi: str, title: Optional[str] = None) -> Option
                     oa_pdf = (data.get("openAccessPdf") or {}).get("url")
                     if oa_pdf:
                         full_text = await _fetch_pdf_text(oa_pdf)
+                    abstract = data.get("abstract") or ((data.get("tldr") or {}).get("text"))
                     return {
-                        "abstract": data.get("abstract"),
+                        "abstract": abstract,
                         "full_text": full_text,
                         "title": data.get("title"),
                         "source": "semantic_scholar",
@@ -984,8 +1017,9 @@ async def _try_semantic_scholar(doi: str, title: Optional[str] = None) -> Option
             oa_pdf = (paper.get("openAccessPdf") or {}).get("url")
             if oa_pdf:
                 full_text = await _fetch_pdf_text(oa_pdf)
+            abstract = paper.get("abstract") or ((paper.get("tldr") or {}).get("text"))
             return {
-                "abstract": paper.get("abstract"),
+                "abstract": abstract,
                 "full_text": full_text,
                 "title": paper.get("title"),
                 "source": "semantic_scholar",
@@ -1163,24 +1197,143 @@ async def _try_arxiv(doi: str, title: Optional[str] = None) -> Optional[dict]:
     return await _try_semantic_scholar(doi, title)
 
 
+async def _try_llm_abstract_fallback(
+    doi: Optional[str],
+    title: Optional[str] = None,
+    authors: Optional[str] = None,
+    year: Optional[int] = None,
+    reference_text: Optional[str] = None,
+    claim: Optional[str] = None,
+) -> Optional[dict]:
+    if not OPENAI_API_KEY:
+        logger.info("LLM abstract fallback skipped: OPENAI_API_KEY not configured")
+        return None
+
+    logger.info(
+        "LLM abstract fallback attempt title=%s year=%s doi=%s has_reference=%s",
+        title,
+        year,
+        doi,
+        bool(reference_text),
+    )
+
+    prompt = {
+        "doi": doi or "",
+        "title": title or "",
+        "authors": authors or "",
+        "year": year or "",
+        "referenceText": reference_text or "",
+        "claimContext": (claim or "")[:500],
+        "instruction": (
+            "Return strict JSON only with keys: title, abstract, confidence. "
+            "If you are not reasonably sure, return an empty abstract and low confidence. "
+            "Do not invent fields beyond those keys. Keep abstract under 1600 characters."
+        ),
+    }
+
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": OPENAI_MODEL,
+        "temperature": 0.1,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You help recover missing paper abstracts from bibliographic metadata. "
+                    "Return JSON only. If uncertain, leave abstract empty."
+                ),
+            },
+            {"role": "user", "content": str(prompt)},
+        ],
+    }
+
+    url = f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions"
+    async with httpx.AsyncClient(timeout=25) as client:
+        try:
+            response = await client.post(url, headers=headers, json=payload)
+            if response.status_code != 200:
+                logger.warning(
+                    "LLM abstract fallback HTTP failure status=%s title=%s doi=%s",
+                    response.status_code,
+                    title,
+                    doi,
+                )
+                return None
+            body = response.json()
+            content = (((body.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+            parsed = _extract_json_blob(content)
+            if not parsed:
+                logger.warning("LLM abstract fallback returned non-JSON content title=%s doi=%s", title, doi)
+                return None
+
+            abstract = _normalize_text(str(parsed.get("abstract") or ""))
+            recovered_title = _normalize_text(str(parsed.get("title") or title or ""))
+            confidence = parsed.get("confidence")
+            try:
+                confidence_value = float(confidence)
+            except Exception:
+                confidence_value = 0.0
+
+            if not abstract or confidence_value < 0.45:
+                logger.info(
+                    "LLM abstract fallback rejected title=%s doi=%s confidence=%s has_abstract=%s",
+                    title,
+                    doi,
+                    confidence_value,
+                    bool(abstract),
+                )
+                return None
+
+            logger.info(
+                "LLM abstract fallback accepted title=%s doi=%s confidence=%s abstract_len=%s",
+                recovered_title or title,
+                doi,
+                confidence_value,
+                len(abstract),
+            )
+
+            return {
+                "abstract": abstract,
+                "full_text": None,
+                "title": recovered_title or title,
+                "source": "llm_assist",
+                "metadata": {
+                    "doi": doi,
+                    "authors": authors,
+                    "year": year,
+                    "referenceText": reference_text,
+                    "confidence": confidence_value,
+                },
+            }
+        except Exception as exc:
+            logger.exception("LLM abstract fallback error title=%s doi=%s error=%s", title, doi, exc)
+            return None
+
+
 async def retrieve_cited_paper(doi: str, title: str | None = None) -> dict:
     doi = normalize_doi(doi)
-    result = await _try_semantic_scholar(doi, title)
-    if result:
-        return result
-    result = await _try_openalex(doi)
-    if result:
-        return result
-    result = await _try_unpaywall(doi)
-    if result:
-        return result
-    result = await _try_crossref(doi)
-    if result:
-        return result
-    result = await _try_arxiv(doi, title)
-    if result:
-        return result
-    return {"abstract": None, "full_text": None, "title": title, "source": "not_found", "metadata": {}}
+    best_result: Optional[dict] = None
+
+    for fetcher, args in [
+        (_try_semantic_scholar, (doi, title)),
+        (_try_openalex, (doi,)),
+        (_try_unpaywall, (doi,)),
+        (_try_crossref, (doi,)),
+        (_try_arxiv, (doi, title)),
+    ]:
+        result = await fetcher(*args)
+        if not result:
+            continue
+        if _has_retrievable_text(result):
+            return result
+        if not best_result:
+            best_result = result
+
+    return best_result or {"abstract": None, "full_text": None, "title": title, "source": "not_found", "metadata": {}}
 
 
 def extract_relevant_sections(full_text: str) -> str:
@@ -1308,6 +1461,26 @@ async def _compare_citation_instance(instance: Dict[str, Any]) -> Dict[str, Any]
             source_text = source.get("full_text") or source.get("abstract") or ""
 
     if not source_text:
+        llm_source = await _try_llm_abstract_fallback(
+            doi=doi,
+            title=title,
+            authors=reference_authors,
+            year=cited_year,
+            reference_text=reference_text,
+            claim=claim,
+        )
+        if llm_source:
+            source = llm_source
+            source_text = source.get("full_text") or source.get("abstract") or ""
+            logger.info(
+                "Citation source recovered via fallback title=%s doi=%s source=%s",
+                title,
+                doi,
+                source.get("source"),
+            )
+
+    if not source_text:
+        logger.info("Citation remained unverifiable title=%s doi=%s year=%s", title, doi, cited_year)
         return {
             "claim": claim,
             "citationType": citation_type,

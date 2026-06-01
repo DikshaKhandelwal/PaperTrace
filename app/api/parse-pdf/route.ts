@@ -10,6 +10,15 @@ function getFilenameFromUrl(pdfUrl: string) {
   }
 }
 
+function getBackendCandidates(request: NextRequest) {
+  const deployedBackend = (process.env.PAPERTRACE_BACKEND || "https://papertrace-1.onrender.com").replace(/\/+$/, "");
+  const localBackends = ["http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:8001", "http://127.0.0.1:8001"];
+  const hostname = request.nextUrl.hostname;
+  const isLocalRequest = hostname === "localhost" || hostname === "127.0.0.1";
+
+  return isLocalRequest ? [...localBackends, deployedBackend] : [deployedBackend, ...localBackends];
+}
+
 export async function POST(request: NextRequest) {
   try {
     const contentType = request.headers.get("content-type") || "";
@@ -53,15 +62,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No PDF file provided" }, { status: 400 });
     }
 
-    const backendUrls = [
-      process.env.PAPERTRACE_BACKEND || "http://localhost:8000",
-      "http://127.0.0.1:8000",
-      "http://localhost:8001",
-    ];
+    const backendUrls = getBackendCandidates(request);
 
     let lastErrorText = "";
 
     for (const backendUrl of backendUrls) {
+      console.info(`[api/parse-pdf] trying backend candidate: ${backendUrl}`);
       const backendForm = new FormData();
       backendForm.set("file", file, file.name);
 
@@ -71,6 +77,7 @@ export async function POST(request: NextRequest) {
       });
 
       if (res.ok) {
+        console.info(`[api/parse-pdf] using backend candidate: ${backendUrl}`);
         const parsed = await res.json();
         return NextResponse.json(parsed);
       }
