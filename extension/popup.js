@@ -1,7 +1,7 @@
 // PaperTrace Extension - Popup Script
 
 const DEFAULT_APP_BASE_URLS = ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"];
-const DEFAULT_BACKEND_BASE_URLS = ["http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:8001", "http://127.0.0.1:8001"];
+const DEFAULT_BACKEND_BASE_URLS = ["http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:8001", "http://127.0.0.1:8001", "https://papertrace-1.onrender.com"];
 const DEFAULT_SETTINGS = {
   apiUrl: "http://localhost:3000/api/analyze",
   appBaseUrl: "http://localhost:3000",

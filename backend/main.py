@@ -1,7 +1,8 @@
 import uvicorn
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from embeddings import embed_texts, cosine_similarity
@@ -9,6 +10,14 @@ import services
 import re
 import os
 import requests
+import time
+import logging
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+logger = logging.getLogger("papertrace.backend")
 
 app = FastAPI(title="PaperTrace Backend")
 
@@ -20,6 +29,38 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    started = time.perf_counter()
+    request_id = f"req-{int(started * 1000)}"
+    client_host = request.client.host if request.client else "unknown"
+    logger.info("[%s] started %s %s client=%s", request_id, request.method, request.url.path, client_host)
+
+    try:
+        response = await call_next(request)
+        duration_ms = round((time.perf_counter() - started) * 1000, 2)
+        logger.info(
+            "[%s] completed %s %s status=%s duration_ms=%s",
+            request_id,
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+        )
+        return response
+    except Exception as exc:
+        duration_ms = round((time.perf_counter() - started) * 1000, 2)
+        logger.exception(
+            "[%s] failed %s %s duration_ms=%s error=%s",
+            request_id,
+            request.method,
+            request.url.path,
+            duration_ms,
+            exc,
+        )
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 class CitationIn(BaseModel):
     id: Optional[str]
@@ -53,6 +94,23 @@ class AnalyzeRequest(BaseModel):
 
 class ParsePdfUrlRequest(BaseModel):
     pdfUrl: str
+
+
+@app.get("/")
+async def root():
+    return {"service": "PaperTrace Backend", "status": "ok"}
+
+
+@app.get("/healthz")
+async def healthz():
+    logger.info("Health check requested")
+    return {
+        "status": "ok",
+        "service": "PaperTrace Backend",
+        "timestamp": datetime.utcnow().isoformat(),
+        "hasSemanticScholarKey": bool(os.getenv("SEMANTIC_SCHOLAR_API_KEY")),
+        "grobidUrl": os.getenv("GROBID_URL", "http://localhost:8070"),
+    }
 
 
 CONTRASTIVE_CUES = ["unlike", "in contrast", "contrary", "whereas", "however", "instead of"]
@@ -205,6 +263,7 @@ def _score_signal(score_pass: float, score_warn: float, pass_score: int, warn_sc
 @app.post("/parse-pdf")
 async def parse_pdf(file: UploadFile = File(...)):
     try:
+        logger.info("/parse-pdf invoked filename=%s", file.filename)
         if not file.filename or not file.filename.lower().endswith(".pdf"):
             raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
@@ -213,10 +272,18 @@ async def parse_pdf(file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="Uploaded PDF is empty")
 
         parsed = services.parse_pdf_with_citations(data)
+        logger.info(
+            "/parse-pdf parsed filename=%s citations=%s instances=%s source=%s",
+            file.filename,
+            len(parsed.get("citations") or []),
+            len(parsed.get("citationInstances") or []),
+            parsed.get("citationSource"),
+        )
         return parsed
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("/parse-pdf failed filename=%s error=%s", file.filename, e)
         raise HTTPException(status_code=500, detail=f"PDF parsing failed: {str(e)}")
 
 
@@ -224,6 +291,7 @@ async def parse_pdf(file: UploadFile = File(...)):
 async def parse_pdf_url(req: ParsePdfUrlRequest):
     try:
         pdf_url = (req.pdfUrl or "").strip()
+        logger.info("/parse-pdf-url invoked pdfUrl=%s", pdf_url)
         if not pdf_url:
             raise HTTPException(status_code=400, detail="A PDF URL is required")
 
@@ -247,15 +315,31 @@ async def parse_pdf_url(req: ParsePdfUrlRequest):
             raise HTTPException(status_code=400, detail="Fetched URL did not return a valid PDF")
 
         parsed = services.parse_pdf_with_citations(data)
+        logger.info(
+            "/parse-pdf-url parsed pdfUrl=%s citations=%s instances=%s source=%s",
+            pdf_url,
+            len(parsed.get("citations") or []),
+            len(parsed.get("citationInstances") or []),
+            parsed.get("citationSource"),
+        )
         return parsed
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("/parse-pdf-url failed pdfUrl=%s error=%s", req.pdfUrl, e)
         raise HTTPException(status_code=500, detail=f"PDF URL parsing failed: {str(e)}")
 
 @app.post("/analyze")
 async def analyze(req: AnalyzeRequest):
     try:
+        logger.info(
+            "/analyze invoked title=%s authors=%s year=%s citations=%s instances=%s",
+            req.title,
+            len(req.authors or []),
+            req.year,
+            len(req.citations or []),
+            len(req.citationInstances or []),
+        )
         full_text = req.fullText or ""
         abstract = req.abstractText or ""
         citations = [c.model_dump() if hasattr(c, "model_dump") else c.dict() for c in (req.citations or [])]
@@ -573,8 +657,20 @@ async def analyze(req: AnalyzeRequest):
             "fieldOfStudy": field_names,
         }
 
+        logger.info(
+            "/analyze completed title=%s overallScore=%s grade=%s verified=%s partial=%s mismatch=%s unverifiable=%s",
+            req.title,
+            report.get("overallScore"),
+            report.get("overallGrade"),
+            report.get("verifiedCitations"),
+            report.get("citationPartialCount"),
+            report.get("citationMismatchCount"),
+            report.get("citationUnverifiableCount"),
+        )
+
         return report
     except Exception as e:
+        logger.exception("/analyze failed title=%s error=%s", req.title, e)
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Upload, FileText, Newspaper, ArrowRight, BookOpen } from "lucide-react";
+import { Upload, FileText, Newspaper, ArrowRight, BookOpen, Download } from "lucide-react";
 
 interface UploadProps {
   onPipelineUpdate?: (steps: Array<{
@@ -207,9 +207,17 @@ export function PaperUpload({ onUpload, isLoading, onPipelineUpdate }: UploadPro
     <div className="min-h-screen paper-texture bg-[radial-gradient(circle_at_top,_rgba(139,94,52,0.10),_transparent_28%),linear-gradient(180deg,_#f7efe0,_#efe0c1)] p-6 text-[#1b140e]">
       {/* Header */}
       <div className="max-w-5xl mx-auto mb-12">
-        <div className="flex items-center gap-3 mb-4">
-          <Newspaper className="w-8 h-8 text-[#8b5e34]" />
-          <h1 className="text-4xl font-serif font-bold text-[#1b140e]">PaperTrace</h1>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <Newspaper className="w-8 h-8 text-[#8b5e34]" />
+            <h1 className="text-4xl font-serif font-bold text-[#1b140e]">PaperTrace</h1>
+          </div>
+          <Button asChild variant="outline" className="border-[#d5c3a4] bg-[#fbf7ef] text-[#4b3a2a] hover:bg-[#f2e8d6]">
+            <a href="/papertrace-extension.zip" download>
+              <Download className="mr-2 h-4 w-4" />
+              Download Extension
+            </a>
+          </Button>
         </div>
         <p className="text-lg font-serif italic text-[#6d5c48]">Research Quality Auditor</p>
         <p className="mt-2 max-w-3xl text-[#594735]">
